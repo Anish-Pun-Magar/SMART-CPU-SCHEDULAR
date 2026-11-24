@@ -8,7 +8,9 @@ class SchedulingInputError(ValueError):
     """Raised when a workload cannot be scheduled safely."""
 
 
-def validate_workload(processes: list[dict[str, Any]], quantum: int | None = None) -> None:
+def validate_workload(
+    processes: list[dict[str, Any]], quantum: int | None = None
+) -> None:
     if not isinstance(processes, list) or not processes:
         raise SchedulingInputError("Provide at least one process.")
     if len(processes) > 50:
@@ -19,7 +21,9 @@ def validate_workload(processes: list[dict[str, Any]], quantum: int | None = Non
             raise SchedulingInputError(f"Process {index + 1} must be an object.")
         pid = process.get("pid")
         if not isinstance(pid, str) or not pid.strip() or len(pid.strip()) > 20:
-            raise SchedulingInputError(f"Process {index + 1} needs a 1–20 character ID.")
+            raise SchedulingInputError(
+                f"Process {index + 1} needs a 1–20 character ID."
+            )
         pid = pid.strip()
         if pid in seen:
             raise SchedulingInputError(f"Process ID '{pid}' is duplicated.")
@@ -27,17 +31,26 @@ def validate_workload(processes: list[dict[str, Any]], quantum: int | None = Non
         for field in ("arrival_time", "burst_time"):
             value = process.get(field)
             if isinstance(value, bool) or not isinstance(value, int):
-                raise SchedulingInputError(f"{pid}: {field.replace('_', ' ')} must be an integer.")
+                raise SchedulingInputError(
+                    f"{pid}: {field.replace('_', ' ')} must be an integer."
+                )
             if field == "arrival_time" and value < 0:
                 raise SchedulingInputError(f"{pid}: arrival time cannot be negative.")
             if field == "burst_time" and value <= 0:
-                raise SchedulingInputError(f"{pid}: burst time must be greater than zero.")
-    if quantum is not None and (isinstance(quantum, bool) or not isinstance(quantum, int) or quantum <= 0):
+                raise SchedulingInputError(
+                    f"{pid}: burst time must be greater than zero."
+                )
+    if quantum is not None and (
+        isinstance(quantum, bool) or not isinstance(quantum, int) or quantum <= 0
+    ):
         raise SchedulingInputError("Round Robin quantum must be a positive integer.")
 
 
-def _pack(segments: list[dict[str, Any]], stats: dict[str, dict[str, int]],
-          processes: list[dict[str, Any]]) -> dict[str, Any]:
+def _pack(
+    segments: list[dict[str, Any]],
+    stats: dict[str, dict[str, int]],
+    processes: list[dict[str, Any]],
+) -> dict[str, Any]:
     rows = []
     for process in processes:
         pid = process["pid"].strip()
@@ -45,27 +58,50 @@ def _pack(segments: list[dict[str, Any]], stats: dict[str, dict[str, int]],
         ct = values["completion_time"]
         tat = ct - process["arrival_time"]
         wt = tat - process["burst_time"]
-        rows.append({"pid": pid, "arrival_time": process["arrival_time"], "burst_time": process["burst_time"],
-                     "completion_time": ct, "turnaround_time": tat, "waiting_time": wt,
-                     "response_time": values["first_start"] - process["arrival_time"]})
+        rows.append(
+            {
+                "pid": pid,
+                "arrival_time": process["arrival_time"],
+                "burst_time": process["burst_time"],
+                "completion_time": ct,
+                "turnaround_time": tat,
+                "waiting_time": wt,
+                "response_time": values["first_start"] - process["arrival_time"],
+            }
+        )
     total_time = max((s["end"] for s in segments), default=0)
     busy_time = sum(p["burst_time"] for p in processes)
-    switches = sum(1 for i in range(1, len(segments))
-                   if segments[i - 1]["pid"] not in ("IDLE", segments[i]["pid"])
-                   and segments[i]["pid"] != "IDLE")
+    switches = sum(
+        1
+        for i in range(1, len(segments))
+        if segments[i - 1]["pid"] not in ("IDLE", segments[i]["pid"])
+        and segments[i]["pid"] != "IDLE"
+    )
     count = len(rows)
-    return {"processes": rows, "segments": segments,
-            "averages": {"completion_time": round(sum(r["completion_time"] for r in rows) / count, 2),
-                         "turnaround_time": round(sum(r["turnaround_time"] for r in rows) / count, 2),
-                         "waiting_time": round(sum(r["waiting_time"] for r in rows) / count, 2),
-                         "response_time": round(sum(r["response_time"] for r in rows) / count, 2)},
-            "total_time": total_time, "busy_time": busy_time,
-            "throughput": round(count / total_time, 4) if total_time else 0,
-            "cpu_utilization": round(busy_time / total_time * 100, 2) if total_time else 0,
-            "context_switches": switches}
+    return {
+        "processes": rows,
+        "segments": segments,
+        "averages": {
+            "completion_time": round(
+                sum(r["completion_time"] for r in rows) / count, 2
+            ),
+            "turnaround_time": round(
+                sum(r["turnaround_time"] for r in rows) / count, 2
+            ),
+            "waiting_time": round(sum(r["waiting_time"] for r in rows) / count, 2),
+            "response_time": round(sum(r["response_time"] for r in rows) / count, 2),
+        },
+        "total_time": total_time,
+        "busy_time": busy_time,
+        "throughput": round(count / total_time, 4) if total_time else 0,
+        "cpu_utilization": round(busy_time / total_time * 100, 2) if total_time else 0,
+        "context_switches": switches,
+    }
 
 
-def schedule(processes: list[dict[str, Any]], algorithm: str, quantum: int | None = None) -> dict[str, Any]:
+def schedule(
+    processes: list[dict[str, Any]], algorithm: str, quantum: int | None = None
+) -> dict[str, Any]:
     validate_workload(processes, quantum if algorithm == "RR" else None)
     if algorithm not in {"FCFS", "SJF", "RR"}:
         raise SchedulingInputError("Algorithm must be FCFS, SJF, or RR.")
@@ -100,8 +136,14 @@ def schedule(processes: list[dict[str, Any]], algorithm: str, quantum: int | Non
                     segments.append({"pid": "IDLE", "start": time, "end": next_time})
                 time = next_time
                 ready = [p for p in pending if p["arrival_time"] <= time]
-            chosen = min(ready, key=(lambda p: (p["burst_time"], p["arrival_time"], p["index"])) if algorithm == "SJF"
-                         else (lambda p: (p["arrival_time"], p["index"])))
+            chosen = min(
+                ready,
+                key=(
+                    (lambda p: (p["burst_time"], p["arrival_time"], p["index"]))
+                    if algorithm == "SJF"
+                    else (lambda p: (p["arrival_time"], p["index"]))
+                ),
+            )
             time = run(chosen["pid"], time, chosen["burst_time"])
             pending.remove(chosen)
     else:
@@ -113,15 +155,19 @@ def schedule(processes: list[dict[str, Any]], algorithm: str, quantum: int | Non
                 if time < arrival:
                     segments.append({"pid": "IDLE", "start": time, "end": arrival})
                     time = arrival
-                while next_index < len(jobs) and jobs[next_index]["arrival_time"] <= time:
-                    queue.append(jobs[next_index]); next_index += 1
+                while (
+                    next_index < len(jobs) and jobs[next_index]["arrival_time"] <= time
+                ):
+                    queue.append(jobs[next_index])
+                    next_index += 1
             current = queue.popleft()
             duration = min(quantum, remaining[current["pid"]])
             start = time
             time = run(current["pid"], time, duration)
             # New arrivals during this slice enter before the preempted process is requeued.
             while next_index < len(jobs) and jobs[next_index]["arrival_time"] <= time:
-                queue.append(jobs[next_index]); next_index += 1
+                queue.append(jobs[next_index])
+                next_index += 1
             if remaining[current["pid"]] > 0:
                 queue.append(current)
     return _pack(segments, stats, processes)
@@ -129,5 +175,7 @@ def schedule(processes: list[dict[str, Any]], algorithm: str, quantum: int | Non
 
 def compare(processes: list[dict[str, Any]], quantum: int) -> dict[str, Any]:
     validate_workload(processes, quantum)
-    return {name: schedule(processes, name, quantum if name == "RR" else None)
-            for name in ("FCFS", "SJF", "RR")}
+    return {
+        name: schedule(processes, name, quantum if name == "RR" else None)
+        for name in ("FCFS", "SJF", "RR")
+    }

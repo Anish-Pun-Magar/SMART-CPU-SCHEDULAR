@@ -6,10 +6,18 @@ from pydantic import BaseModel, Field
 
 from .scheduler import SchedulingInputError, compare, schedule
 
-app = FastAPI(title="Smart CPU Scheduler Simulator", version="1.0.0",
-              description="Simulate FCFS, non-preemptive SJF, and Round Robin CPU scheduling.")
-app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
-                   allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+app = FastAPI(
+    title="Smart CPU Scheduler Simulator",
+    version="1.0.0",
+    description="Simulate FCFS, non-preemptive SJF, and Round Robin CPU scheduling.",
+)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 class ProcessInput(BaseModel):
@@ -41,7 +49,9 @@ def health() -> dict[str, str]:
 @app.post("/api/schedule")
 def run_schedule(request: ScheduleRequest) -> dict:
     try:
-        return schedule(records(request.processes), request.algorithm.upper(), request.quantum)
+        return schedule(
+            records(request.processes), request.algorithm.upper(), request.quantum
+        )
     except SchedulingInputError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
