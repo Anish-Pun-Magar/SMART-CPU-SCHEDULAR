@@ -1,19 +1,26 @@
 """FastAPI routes for the Smart CPU Scheduler Simulator."""
 
+import os
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from .scheduler import SchedulingInputError, compare, schedule
+from .scheduler import ALGORITHMS, SchedulingInputError, compare, schedule
 
 app = FastAPI(
     title="Smart CPU Scheduler Simulator",
-    version="1.0.0",
-    description="Simulate FCFS, non-preemptive SJF, and Round Robin CPU scheduling.",
+    version="2.0.0",
+    description="Simulate FCFS, SJF, SRTF, Priority, and Round Robin CPU scheduling.",
 )
+
+# Allowed browser origins. Override with e.g. CORS_ORIGINS="https://my-site.com,http://localhost:5173"
+origins = os.getenv(
+    "CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"
+).split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=[o.strip() for o in origins if o.strip()],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -24,6 +31,8 @@ class ProcessInput(BaseModel):
     pid: str = Field(min_length=1, max_length=20, strict=True)
     arrival_time: int = Field(ge=0, strict=True)
     burst_time: int = Field(gt=0, strict=True)
+    # Lower number = higher priority. Only used by the PRIORITY algorithm.
+    priority: int = Field(default=1, ge=0, strict=True)
 
 
 class ScheduleRequest(BaseModel):
@@ -44,6 +53,11 @@ def records(items: list[ProcessInput]) -> list[dict]:
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/api/algorithms")
+def list_algorithms() -> dict[str, list[str]]:
+    return {"algorithms": list(ALGORITHMS)}
 
 
 @app.post("/api/schedule")

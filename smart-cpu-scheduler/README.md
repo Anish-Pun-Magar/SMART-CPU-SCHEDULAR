@@ -1,131 +1,104 @@
-# Schedulab — Smart CPU Scheduler Simulator
+# Schedulab — Smart CPU Scheduler Simulator (v2.0)
 
-A small full-stack learning project for comparing **FCFS**, **non-preemptive SJF**, and **Round Robin** CPU scheduling. It uses a React + Vite frontend and a Python + FastAPI backend. The algorithms are implemented as short, readable functions, with unit tests for the edge cases students tend to miss.
+An interactive learning lab for comparing **five CPU scheduling algorithms**:
 
-## What it includes
+| Key | Algorithm | Type |
+|---|---|---|
+| `FCFS` | First Come, First Served | non-preemptive |
+| `SJF` | Shortest Job First | non-preemptive |
+| `SRTF` | Shortest Remaining Time First (preemptive SJF) | preemptive |
+| `PRIORITY` | Priority scheduling (lower number = higher priority) | non-preemptive |
+| `RR` | Round Robin with a configurable quantum | preemptive |
 
-- Editable process IDs, arrival times, and positive burst times, with three example workloads.
-- FCFS, non-preemptive Shortest Job First, and Round Robin with a configurable positive integer quantum.
-- Per-process completion (CT), turnaround (TAT), waiting (WT), and response (RT) times.
-- Average CT/TAT/WT/RT, throughput, CPU utilization, context switches, and an execution timeline with time markers.
-- One-click comparison that runs the identical process list through all three policies.
-- Input checks in both the browser and API; clear errors for duplicate IDs, invalid values, unsupported algorithms, and oversized workloads.
-- Responsive layout for desktop and mobile.
+React + Vite frontend, Python + FastAPI backend. The algorithms are short, readable functions with unit tests for the edge cases students tend to miss.
+
+## What's new in v2.0
+- **SRTF** and **Priority** scheduling (new `priority` column per process).
+- **Timeline replay**: play, pause and scrub through the Gantt chart one time unit at a time, with a live "running P2 at t = 5" readout.
+- **Smarter Compare all**: bar chart per metric (waiting, turnaround, response, context switches) with the **best** algorithm highlighted, plus a mini Gantt chart for every algorithm.
+- **Bug fixes**: Round Robin without a quantum now returns a clear 422 error instead of a server crash; typing in a process ID no longer loses keyboard focus; the reserved ID `IDLE` is rejected; API validation messages are readable.
+- **Config**: API URL (`VITE_API_URL`) and CORS origins (`CORS_ORIGINS`) are configurable; added `vite.config.js`.
+- New preset **"Textbook SRTF mix"** and a much larger test suite.
 
 ## Requirements
-
-- Python 3.10 or newer (FastAPI uses Pydantic 2).
-- Node.js 18 or newer and npm.
+- Python 3.10+
+- Node.js 18+ and npm
 
 ## Run locally
-
-Open two terminals from the project folder.
+Open two terminals in the project folder (the one containing `backend/` and `frontend/`).
 
 **Terminal 1 — API**
-
-```bash
+```
 cd backend
 python -m venv .venv
-# Windows PowerShell:
-.venv\Scripts\Activate.ps1
-# macOS/Linux instead: source .venv/bin/activate
+# Windows PowerShell:  .venv\Scripts\Activate.ps1
+# macOS/Linux:         source .venv/bin/activate
 python -m pip install -r requirements.txt
 uvicorn app.main:app --reload
 ```
-
-The API listens on `http://localhost:8000`. Its interactive API reference is at `http://localhost:8000/docs`.
+API: `http://localhost:8000` · interactive docs: `http://localhost:8000/docs`
 
 **Terminal 2 — web app**
-
-```bash
+```
 cd frontend
 npm install
 npm run dev
 ```
+Open the URL Vite prints (usually `http://localhost:5173`).
 
-Open the local URL Vite prints (usually `http://localhost:5173`). Leave both processes running while using the app.
+Optional: copy `frontend/.env.example` to `frontend/.env` to change the API address. To allow another website origin on the backend, set `CORS_ORIGINS="https://my-site.com,http://localhost:5173"`.
 
 ## Run the backend tests
-
-From `backend/`, activate the virtual environment, then run:
-
-```bash
+```
+cd backend
 python -m pytest -q
 ```
-
-The tests cover calculations, CPU idle time, equal-arrival ordering, non-preemptive SJF, Round Robin boundary ordering, invalid inputs, comparison, and the HTTP API contract.
+Covers calculations, idle time, tie-breaking, SJF/SRTF/Priority behaviour, Round Robin boundary ordering, validation, comparison, and the HTTP contract.
 
 ## Architecture
-
-```text
-frontend/src/main.jsx     UI, input checks, API calls, Gantt chart, metrics
+```
+frontend/src/main.jsx     UI, input checks, API calls, Gantt chart + replay, comparison charts
 frontend/src/style.css    Responsive visual design
 backend/app/main.py       FastAPI request/response models and routes
-backend/app/scheduler.py  Validation, scheduling policies, and metrics
+backend/app/scheduler.py  Validation, the five scheduling policies, and metrics
 backend/tests/            Unit tests and API tests
+docs/CODE_GUIDE.md        Code walkthrough, demo script, and likely Q&A
 ```
 
-The frontend owns editable state and presentation. It sends JSON to the API, which validates each request and invokes the pure scheduling functions. The API returns a shared result shape for all policies, so the same timeline and metric components work for each algorithm.
-
-## API contract
-
-### `GET /api/health`
-
-Response: `{"status":"ok"}`.
-
-### `POST /api/schedule`
-
-Request:
-
-```json
+## API
+- `GET /api/health` → `{"status":"ok"}`
+- `GET /api/algorithms` → `{"algorithms":["FCFS","SJF","SRTF","PRIORITY","RR"]}`
+- `POST /api/schedule`
+```
 {
   "processes": [
-    {"pid": "P1", "arrival_time": 0, "burst_time": 5},
-    {"pid": "P2", "arrival_time": 1, "burst_time": 3}
+    {"pid": "P1", "arrival_time": 0, "burst_time": 5, "priority": 2},
+    {"pid": "P2", "arrival_time": 1, "burst_time": 3, "priority": 1}
   ],
-  "algorithm": "RR",
+  "algorithm": "SRTF",
   "quantum": 2
 }
 ```
+`priority` is optional (default 1; lower number = more important). `quantum` is required for `RR` and ignored otherwise.
+- `POST /api/compare` — `{"processes":[...],"quantum":2}` returns an object keyed by all five algorithm names, each computed on the identical workload.
 
-`algorithm` is `FCFS`, `SJF`, or `RR`; `quantum` is required and positive for RR. For FCFS/SJF, quantum is ignored.
+**Result fields:** `processes` (CT, TAT, WT, RT per process), `segments` (`{pid,start,end}`; `IDLE` when no process is ready), `averages`, `total_time`, `busy_time`, `throughput`, `cpu_utilization`, `context_switches` (direct switches from one process to a different one; initial dispatch and resuming after idle are not counted).
 
-### `POST /api/compare`
-
-Request: `{"processes":[...],"quantum":2}`. Returns an object keyed by `FCFS`, `SJF`, and `RR`; every result uses the exact same workload.
-
-### Result fields
-
-- `processes`: source values plus `completion_time`, `turnaround_time`, `waiting_time`, and `response_time` for each process.
-- `segments`: ordered `{pid, start, end}` CPU slices. `pid` is `IDLE` when no process has arrived.
-- `averages`: average CT, TAT, WT, and RT (rounded to 2 decimal places).
-- `total_time`: end of the final segment; `busy_time`: sum of burst times.
-- `throughput`: completed processes per elapsed time unit, rounded to 4 decimals.
-- `cpu_utilization`: busy time / total time × 100, rounded to 2 decimals.
-- `context_switches`: transitions from one process directly to a different process. Initial dispatch, idle-to-process dispatch, and a process resuming after an idle interval are not counted.
-
-Invalid API requests return HTTP 422 with a human-readable `detail` message. The workload limit is 50 processes; IDs must be unique, arrival/burst/quantum values must be integers, arrivals must be nonnegative, and bursts/quantum must be positive.
+Invalid requests return HTTP 422 with a readable `detail`. Limits: 50 processes, unique IDs (not `IDLE`), integer arrival ≥ 0, burst > 0, priority ≥ 0, quantum > 0.
 
 ## Algorithm notes
+- **FCFS** runs ready processes in arrival order; a future arrival creates an explicit idle interval.
+- **SJF** picks the ready process with the shortest burst when the CPU frees up; a running job is never interrupted.
+- **SRTF** re-decides at every arrival: the process with the least remaining time runs. Ties keep the current process (no pointless switch), then earliest arrival.
+- **Priority** picks the ready process with the lowest priority number; non-preemptive. Ties: arrival, then input order. Can starve low-priority work (aging is not modelled).
+- **Round Robin** gives the head of the queue up to one quantum. Arrivals during or exactly at the end of a slice join the queue *before* the unfinished process is requeued.
+- **Metrics:** CT = finish time; TAT = CT − arrival; WT = TAT − burst; RT = first CPU start − arrival. Throughput = processes ÷ total time.
 
-- **FCFS** is non-preemptive. Ready processes run in arrival order; input order breaks equal-arrival ties. A future arrival creates an explicit idle interval.
-- **SJF** is non-preemptive. Each time the CPU becomes free, it chooses the ready process with the shortest burst. Arrival time and then input order break ties. A running job is never interrupted by a shorter arrival.
-- **Round Robin** gives the head of the ready queue at most one quantum. Arrivals during a slice join the queue before the unfinished process is put back at the tail. Arrivals exactly at the slice end are also enqueued before that requeue. The input order breaks simultaneous-arrival ties.
-- **Metrics:** CT is the finish time; TAT = CT − arrival; WT = TAT − burst; RT = first CPU start − arrival. Throughput divides process count by elapsed time from time zero, so an initial idle interval is included in utilization and throughput.
+## Scope
+One CPU, integer time units, no I/O bursts, no multiprocessor support, and context switches cost no extra time.
 
-## Example test
-
-For P1 `(arrival=0, burst=4)` and P2 `(arrival=2, burst=2)`, RR with quantum 2 produces P1 `[0,2)`, P2 `[2,4)`, P1 `[4,6)`. Completion times are P1=6 and P2=4. This demonstrates the boundary rule: P2 joins the ready queue before P1 is requeued.
-
-## Suggested four-person group division
-
-1. **Scheduling engine:** implement or explain FCFS, SJF, and RR; own `scheduler.py` and algorithm tests.
-2. **API and validation:** own request models, routes, validation behavior, and API tests.
-3. **Frontend interaction:** own workload editor, presets, algorithm selection, and API error states.
-4. **Visualization and integration:** own Gantt chart, metrics/comparison presentation, responsive checks, and README/demo coordination.
-
-Agree on the request and response fields first, then integrate through small commits. Each member should be able to explain their part and the edge cases they tested.
-
-## Scope choices
-
-This simulator models one CPU and integer time units. It does not model I/O bursts, priorities, multiprocessors, or operating-system overhead. Context switches are counted as direct process-to-process transitions and are not assigned extra time. These limits keep the project achievable while still demonstrating the core scheduling tradeoffs.
+## Team split (suggested)
+1. **Scheduling engine** — `scheduler.py` and algorithm tests.
+2. **API & validation** — `main.py`, request models, API tests.
+3. **Frontend interaction** — workload editor, presets, error states.
+4. **Visualization** — Gantt chart, replay, comparison charts, README/demo.

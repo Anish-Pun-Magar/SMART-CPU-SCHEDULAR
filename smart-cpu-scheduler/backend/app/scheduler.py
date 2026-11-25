@@ -1,11 +1,29 @@
-"""Clear, deterministic implementations of three classic CPU schedulers."""
+"""Clear, deterministic implementations of five classic CPU schedulers.
+
+Supported algorithms
+--------------------
+FCFS      First Come, First Served (non-preemptive)
+SJF       Shortest Job First        (non-preemptive)
+SRTF      Shortest Remaining Time First (preemptive SJF)
+PRIORITY  Priority scheduling       (non-preemptive, lower number = higher priority)
+RR        Round Robin               (preemptive, fixed time quantum)
+"""
 
 from collections import deque
 from typing import Any
 
+ALGORITHMS = ("FCFS", "SJF", "SRTF", "PRIORITY", "RR")
+MAX_PROCESSES = 50
+DEFAULT_PRIORITY = 1
+
 
 class SchedulingInputError(ValueError):
     """Raised when a workload cannot be scheduled safely."""
+
+
+def _is_int(value: Any) -> bool:
+    """True for real integers (bool is a subclass of int in Python, so exclude it)."""
+    return isinstance(value, int) and not isinstance(value, bool)
 
 
 def validate_workload(
@@ -13,8 +31,10 @@ def validate_workload(
 ) -> None:
     if not isinstance(processes, list) or not processes:
         raise SchedulingInputError("Provide at least one process.")
-    if len(processes) > 50:
-        raise SchedulingInputError("A workload can contain at most 50 processes.")
+    if len(processes) > MAX_PROCESSES:
+        raise SchedulingInputError(
+            f"A workload can contain at most {MAX_PROCESSES} processes."
+        )
     seen: set[str] = set()
     for index, process in enumerate(processes):
         if not isinstance(process, dict):
@@ -25,12 +45,14 @@ def validate_workload(
                 f"Process {index + 1} needs a 1–20 character ID."
             )
         pid = pid.strip()
+        if pid == "IDLE":
+            raise SchedulingInputError("'IDLE' is reserved and cannot be a process ID.")
         if pid in seen:
             raise SchedulingInputError(f"Process ID '{pid}' is duplicated.")
         seen.add(pid)
         for field in ("arrival_time", "burst_time"):
             value = process.get(field)
-            if isinstance(value, bool) or not isinstance(value, int):
+            if not _is_int(value):
                 raise SchedulingInputError(
                     f"{pid}: {field.replace('_', ' ')} must be an integer."
                 )
@@ -40,9 +62,13 @@ def validate_workload(
                 raise SchedulingInputError(
                     f"{pid}: burst time must be greater than zero."
                 )
-    if quantum is not None and (
-        isinstance(quantum, bool) or not isinstance(quantum, int) or quantum <= 0
-    ):
+        # Priority is optional; only the PRIORITY algorithm uses it.
+        priority = process.get("priority", DEFAULT_PRIORITY)
+        if not _is_int(priority) or priority < 0:
+            raise SchedulingInputError(
+                f"{pid}: priority must be an integer of 0 or higher."
+            )
+    if quantum is not None and (not _is_int(quantum) or quantum <= 0):
         raise SchedulingInputError("Round Robin quantum must be a positive integer.")
 
 
@@ -63,6 +89,7 @@ def _pack(
                 "pid": pid,
                 "arrival_time": process["arrival_time"],
                 "burst_time": process["burst_time"],
+                "priority": process.get("priority", DEFAULT_PRIORITY),
                 "completion_time": ct,
                 "turnaround_time": tat,
                 "waiting_time": wt,
@@ -71,6 +98,7 @@ def _pack(
         )
     total_time = max((s["end"] for s in segments), default=0)
     busy_time = sum(p["burst_time"] for p in processes)
+    # A context switch = the CPU goes straight from one process to a different one.
     switches = sum(
         1
         for i in range(1, len(segments))
@@ -78,18 +106,18 @@ def _pack(
         and segments[i]["pid"] != "IDLE"
     )
     count = len(rows)
+
+    def avg(key: str) -> float:
+        return round(sum(r[key] for r in rows) / count, 2)
+
     return {
         "processes": rows,
         "segments": segments,
         "averages": {
-            "completion_time": round(
-                sum(r["completion_time"] for r in rows) / count, 2
-            ),
-            "turnaround_time": round(
-                sum(r["turnaround_time"] for r in rows) / count, 2
-            ),
-            "waiting_time": round(sum(r["waiting_time"] for r in rows) / count, 2),
-            "response_time": round(sum(r["response_time"] for r in rows) / count, 2),
+            "completion_time": avg("completion_time"),
+            "turnaround_time": avg("turnaround_time"),
+            "waiting_time": avg("waiting_time"),
+            "response_time": avg("response_time"),
         },
         "total_time": total_time,
         "busy_time": busy_time,
@@ -102,22 +130,36 @@ def _pack(
 def schedule(
     processes: list[dict[str, Any]], algorithm: str, quantum: int | None = None
 ) -> dict[str, Any]:
+    if algorithm not in ALGORITHMS:
+        raise SchedulingInputError(
+            "Algorithm must be one of: " + ", ".join(ALGORITHMS) + "."
+        )
+    if algorithm == "RR" and quantum is None:
+        raise SchedulingInputError("Round Robin needs a time quantum.")
     validate_workload(processes, quantum if algorithm == "RR" else None)
-    if algorithm not in {"FCFS", "SJF", "RR"}:
-        raise SchedulingInputError("Algorithm must be FCFS, SJF, or RR.")
-    # Copy and sort by arrival, with input order resolving equal arrival times.
-    jobs = [dict(p, pid=p["pid"].strip(), index=i) for i, p in enumerate(processes)]
+
+    # Work on copies, sorted by arrival; input order resolves equal arrival times.
+    jobs = [
+        dict(
+            p,
+            pid=p["pid"].strip(),
+            index=i,
+            priority=p.get("priority", DEFAULT_PRIORITY),
+        )
+        for i, p in enumerate(processes)
+    ]
     jobs.sort(key=lambda p: (p["arrival_time"], p["index"]))
     remaining = {p["pid"]: p["burst_time"] for p in jobs}
     stats = {p["pid"]: {"first_start": -1, "completion_time": 0} for p in jobs}
     segments: list[dict[str, Any]] = []
 
     def run(pid: str, start: int, duration: int) -> int:
+        """Give `pid` the CPU for `duration` units starting at `start`."""
         end = start + duration
         if stats[pid]["first_start"] < 0:
             stats[pid]["first_start"] = start
         if segments and segments[-1]["pid"] == pid and segments[-1]["end"] == start:
-            segments[-1]["end"] = end
+            segments[-1]["end"] = end  # merge back-to-back slices of one process
         else:
             segments.append({"pid": pid, "start": start, "end": end})
         remaining[pid] -= duration
@@ -125,36 +167,62 @@ def schedule(
             stats[pid]["completion_time"] = end
         return end
 
+    def idle_until(time: int, next_time: int) -> int:
+        if next_time > time:
+            segments.append({"pid": "IDLE", "start": time, "end": next_time})
+        return next_time
+
     time = 0
-    if algorithm in {"FCFS", "SJF"}:
+
+    if algorithm in {"FCFS", "SJF", "PRIORITY"}:
+        # Non-preemptive: pick one ready process and run it to completion.
+        keys = {
+            "FCFS": lambda p: (p["arrival_time"], p["index"]),
+            "SJF": lambda p: (p["burst_time"], p["arrival_time"], p["index"]),
+            "PRIORITY": lambda p: (p["priority"], p["arrival_time"], p["index"]),
+        }
         pending = jobs.copy()
         while pending:
             ready = [p for p in pending if p["arrival_time"] <= time]
             if not ready:
-                next_time = pending[0]["arrival_time"]
-                if next_time > time:
-                    segments.append({"pid": "IDLE", "start": time, "end": next_time})
-                time = next_time
+                time = idle_until(time, pending[0]["arrival_time"])
                 ready = [p for p in pending if p["arrival_time"] <= time]
-            chosen = min(
-                ready,
-                key=(
-                    (lambda p: (p["burst_time"], p["arrival_time"], p["index"]))
-                    if algorithm == "SJF"
-                    else (lambda p: (p["arrival_time"], p["index"]))
-                ),
-            )
+            chosen = min(ready, key=keys[algorithm])
             time = run(chosen["pid"], time, chosen["burst_time"])
             pending.remove(chosen)
-    else:
+
+    elif algorithm == "SRTF":
+        # Preemptive: whenever a process arrives, re-pick the shortest remaining job.
+        last_pid = None
+        while any(r > 0 for r in remaining.values()):
+            unfinished = [p for p in jobs if remaining[p["pid"]] > 0]
+            ready = [p for p in unfinished if p["arrival_time"] <= time]
+            if not ready:
+                time = idle_until(time, min(p["arrival_time"] for p in unfinished))
+                continue
+            # Tie-break: keep running the current process, then earliest arrival.
+            chosen = min(
+                ready,
+                key=lambda p: (
+                    remaining[p["pid"]],
+                    0 if p["pid"] == last_pid else 1,
+                    p["arrival_time"],
+                    p["index"],
+                ),
+            )
+            future = [p["arrival_time"] for p in unfinished if p["arrival_time"] > time]
+            duration = remaining[chosen["pid"]]
+            if future:
+                duration = min(duration, min(future) - time)
+            time = run(chosen["pid"], time, duration)
+            last_pid = chosen["pid"]
+
+    else:  # Round Robin
         queue: deque[dict[str, Any]] = deque()
         next_index = 0
         while next_index < len(jobs) or queue:
             if not queue:
-                arrival = jobs[next_index]["arrival_time"]
-                if time < arrival:
-                    segments.append({"pid": "IDLE", "start": time, "end": arrival})
-                    time = arrival
+                time = idle_until(time, jobs[next_index]["arrival_time"])
                 while (
                     next_index < len(jobs) and jobs[next_index]["arrival_time"] <= time
                 ):
@@ -162,20 +230,22 @@ def schedule(
                     next_index += 1
             current = queue.popleft()
             duration = min(quantum, remaining[current["pid"]])
-            start = time
             time = run(current["pid"], time, duration)
-            # New arrivals during this slice enter before the preempted process is requeued.
+            # Arrivals during (or exactly at the end of) this slice join the queue
+            # BEFORE the preempted process goes back to the tail.
             while next_index < len(jobs) and jobs[next_index]["arrival_time"] <= time:
                 queue.append(jobs[next_index])
                 next_index += 1
             if remaining[current["pid"]] > 0:
                 queue.append(current)
+
     return _pack(segments, stats, processes)
 
 
 def compare(processes: list[dict[str, Any]], quantum: int) -> dict[str, Any]:
+    """Run the identical workload through every algorithm."""
     validate_workload(processes, quantum)
     return {
         name: schedule(processes, name, quantum if name == "RR" else None)
-        for name in ("FCFS", "SJF", "RR")
+        for name in ALGORITHMS
     }
